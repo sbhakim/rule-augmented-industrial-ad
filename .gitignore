@@ -1,0 +1,26 @@
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Runtime outputs and intermediate artifacts
+outputs/
+*.log
+*.tmp
+
+# Local datasets
+data/mvtec_ad/
+
+# Model artifacts
+*.npz
+*.pt
+*.pth
+
+# Generated tabular and record exports
+*.csv
+*.jsonl
