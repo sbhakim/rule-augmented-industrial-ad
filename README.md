@@ -11,8 +11,18 @@ This public release keeps only the core implementation and architecture-facing p
 - `configs/` contains example JSON configs with repository-relative paths.
 - `assets/` contains the architecture figure used on the repository landing page.
 - `data/` contains dataset instructions only.
+- `tests/` contains unit tests covering metric computation, model save/load roundtrip, and the rule-engine decision branches.
 
 This release intentionally excludes manuscript-generation utilities, plotting and visualization code, intermediate outputs, trained model artifacts, and the full MVTec AD dataset.
+
+## Where to start reading
+
+The symbolic reasoning layer is the contribution of the paper. Readers interested in the core idea should start at:
+
+- `src/rules/engine.py`: the rule engine that maps anomaly regions to severity, archetype, confidence, quality, and spatial descriptors.
+- `src/rules/priors.py`: category-level structural priors consumed by the engine.
+- `src/features/region_features.py`: geometric region summaries that feed the engine.
+- `tests/test_rules_engine.py`: golden-input-golden-output tests documenting the rule contract.
 
 ## Repository Layout
 
@@ -24,10 +34,11 @@ This release intentionally excludes manuscript-generation utilities, plotting an
 - `src/rules`: symbolic rule engine, priors, and explanation text.
 - `src/evaluation`: metrics, records, reports, and consistency utilities.
 - `src/pipelines`: fit, evaluate, and dataset-audit entry points.
+- `tests/`: unit tests for metrics, model roundtrip, and rule-engine branches.
 
 ## Setup
 
-Install the core dependencies:
+Tested with Python 3.9. Install the core dependencies:
 
 ```bash
 pip install -r requirements.txt
@@ -55,6 +66,14 @@ Run a specific config:
 
 ```bash
 python main.py --config configs/feature_smoke_bottle.json
+```
+
+## Tests
+
+Run the unit-test suite (no dataset required):
+
+```bash
+python -m pytest tests/
 ```
 
 ## Notes

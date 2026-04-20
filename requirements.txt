@@ -1,5 +1,5 @@
-numpy
-Pillow
-scipy
-torch
-torchvision
+numpy>=1.21
+Pillow>=9.0
+scipy>=1.8
+torch>=1.12
+torchvision>=0.13
