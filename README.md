@@ -1,6 +1,6 @@
 # Rule-Augmented Industrial Anomaly Detection
 
-This repository contains the core implementation for the IECON 2026 submission on rule-augmented explainable anomaly detection for industrial visual inspection.
+This repository contains the core implementation of a rule-augmented explainable anomaly detection framework for industrial visual inspection.
 
 The project studies how anomaly detection outputs can be converted into structured inspection records rather than left as raw scores and heatmaps. It combines one-class visual anomaly models with a lightweight rule-based reasoning layer that summarizes detected regions through severity, archetype, confidence, and spatial cues. The codebase is organized around a modular pipeline: dataset indexing, model fitting, anomaly-map generation, region cleanup, symbolic interpretation, and report export. The public release focuses on that implementation path and the overall architecture.
 
