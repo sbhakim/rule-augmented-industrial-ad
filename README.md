@@ -13,7 +13,7 @@ This public release keeps only the core implementation and architecture-facing p
 - `data/` contains dataset instructions only.
 - `tests/` contains unit tests covering metric computation, model save/load roundtrip, and the rule-engine decision branches.
 
-This release intentionally excludes manuscript-generation utilities, plotting and visualization code, intermediate outputs, trained model artifacts, and the full MVTec AD dataset.
+<!-- This release intentionally excludes manuscript-generation utilities, plotting and visualization code, intermediate outputs, trained model artifacts, and the full MVTec AD dataset. -->
 
 ## Where to start reading
 
