@@ -1,4 +1,14 @@
-"""Evaluation metrics without heavy external dependencies."""
+"""Evaluation metrics for detection, localization, and explanation coverage.
+
+The metrics here are deliberately implemented from primitives so the
+repository has no hard dependency on ``scikit-learn`` or any other
+heavy stack at evaluation time. Numerical conventions follow the
+references most users will compare against (rank-sum AUROC, MVTec PRO
+integrated to a finite false-positive budget, set-based Dice/IoU on
+binary masks). Edge cases that would otherwise raise are mapped to
+NaN so a category with no anomalies in the test split does not
+poison aggregate reporting.
+"""
 
 from typing import Dict, Iterable, Tuple
 
@@ -7,7 +17,14 @@ from scipy import ndimage
 
 
 def auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
-    """Compute AUROC from binary labels and scores."""
+    """Mann-Whitney rank-sum form of AUROC.
+
+    Equivalent to the trapezoidal area under the ROC curve but
+    computed from average ranks. Average-rank handling means
+    repeated score values are scored consistently regardless of
+    sort stability, which matters because anomaly maps often
+    contain large blocks of identical low scores.
+    """
     y_true = np.asarray(y_true).astype(np.int32)
     y_score = np.asarray(y_score).astype(np.float64)
     pos = y_true == 1
@@ -17,6 +34,9 @@ def auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     if n_pos == 0 or n_neg == 0:
         return float("nan")
 
+    # Walk the sorted scores in groups of ties and assign each
+    # tied block its average rank. This is the standard fix for
+    # the Mann-Whitney estimator under ties.
     order = np.argsort(y_score, kind="mergesort")
     sorted_scores = y_score[order]
     ranks = np.empty_like(order, dtype=np.float64)
@@ -55,10 +75,15 @@ def iou_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 
 def coverage_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Fraction of ground-truth anomaly pixels falling inside predicted regions.
+    """Recall of ground-truth anomaly pixels by the predicted mask.
 
-    Interpreted as explanation coverage: how much of the real defect is
-    captured by the flagged regions that the symbolic layer reasons over.
+    Used as the explanation-side coverage signal: how much of the
+    real defect is contained in the flagged regions that survive
+    cleanup and reach the symbolic layer. Distinct from pixel-level
+    AUROC because it is computed against the post-thresholded,
+    post-cleanup mask rather than the continuous anomaly map.
+    Returns NaN for nominal images so they can be filtered out
+    cleanly when aggregating.
     """
     y_true = y_true.astype(bool)
     y_pred = y_pred.astype(bool)
@@ -75,18 +100,25 @@ def pro_score(
     max_fpr: float = 0.3,
     num_thresholds: int = 100,
 ) -> float:
-    """Per-region overlap score integrated over FPR in [0, max_fpr].
+    """Per-region overlap integrated over a bounded false-positive budget.
 
-    Implements the standard MVTec PRO metric: for each threshold, compute
-    (a) the mean per-region overlap across all anomalous connected components
-    and (b) the false-positive rate on nominal pixels, then return the area
-    under the (FPR, PRO) curve up to ``max_fpr``, normalized by ``max_fpr``.
+    The PRO metric weights every defect region equally regardless of
+    its size, which is the opposite of pixel-level recall and is the
+    reason it is preferred in industrial inspection. The (FPR, PRO)
+    curve is built by sweeping a set of score thresholds; the result
+    is the area under that curve restricted to the low-FPR regime
+    where deployment usually operates, normalized so the value lies
+    in [0, 1].
     """
     masks = [np.asarray(m, dtype=bool) for m in masks]
     scores = [np.asarray(s, dtype=np.float64) for s in scores]
     if not masks:
         return float("nan")
 
+    # Sample the threshold set as quantiles of the pooled score
+    # distribution so that points along the (FPR, PRO) curve are
+    # spread roughly evenly rather than clustering near the
+    # extremes of the score range.
     all_scores = np.concatenate([s.reshape(-1) for s in scores])
     score_min = float(np.min(all_scores))
     score_max = float(np.max(all_scores))
@@ -95,6 +127,8 @@ def pro_score(
     percentiles = np.linspace(100.0, 0.0, num=num_thresholds)
     thresholds = np.percentile(all_scores, percentiles)
 
+    # Cache the connected-component decomposition per image once;
+    # the same regions are reused at every threshold below.
     region_cache = []
     total_nominal = 0
     for mask, score_map in zip(masks, scores):

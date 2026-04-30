@@ -1,4 +1,18 @@
-"""Binary-mask cleanup utilities for anomaly-map postprocessing."""
+"""Binary-mask cleanup operating between the detector and the rule layer.
+
+This module implements the standard morphological cleanup chain
+(opening, closing, small-component filtering) without an external
+dependency on OpenCV or scipy. Keeping it dependency-free is a
+deliberate choice so the repository can run on minimal Python
+installations and so the cleanup behaviour is exactly reproducible
+across platforms.
+
+The cleanup is the only place where the raw thresholded anomaly
+map is allowed to be modified before the symbolic layer sees it.
+Any change to the morphology choices here will affect every
+downstream metric that uses the cleaned mask (Dice, IoU, coverage,
+the region descriptors fed to the rule engine).
+"""
 
 import numpy as np
 
@@ -6,7 +20,13 @@ from .connected_components import label_components
 
 
 def _shift(mask: np.ndarray, dy: int, dx: int) -> np.ndarray:
-    """Shift a binary mask with zero padding."""
+    """Translate a binary mask by (dy, dx) with zero padding.
+
+    Used as the elementary building block for dilation and erosion
+    over a 3x3 structuring element. Implementing the shift by
+    explicit slicing avoids the cost of allocating a wrapped roll
+    and the risk of values wrapping around image edges.
+    """
     shifted = np.zeros_like(mask, dtype=np.uint8)
 
     src_y_start = max(0, -dy)
@@ -71,7 +91,15 @@ def cleanup_binary_mask(
     closing_iterations: int,
     min_component_area_px: int,
 ) -> np.ndarray:
-    """Run the default mask-cleanup sequence used by evaluation."""
+    """Apply the canonical opening/closing/area-filter chain.
+
+    The order matters: opening first removes isolated speckle that
+    would otherwise survive as tiny "regions"; closing then fills
+    small holes inside genuine defect blobs; the area filter
+    finally drops any remaining components smaller than the
+    configured minimum. All three iteration counts are configured
+    by the caller so an ablation can disable any step.
+    """
     current = (mask > 0).astype(np.uint8)
     current = binary_opening(current, opening_iterations)
     current = binary_closing(current, closing_iterations)

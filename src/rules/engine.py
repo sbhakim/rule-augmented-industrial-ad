@@ -1,4 +1,19 @@
-"""Rule engine that turns anomaly regions into interpretable reasoning tags."""
+"""Symbolic reasoning layer over post-processed anomaly regions.
+
+This module is the interpretive half of the framework. The visual side
+produces a binary mask and a list of connected-component descriptors;
+this module turns that geometric summary into a small set of human-
+readable labels: a severity bucket, a defect archetype, a confidence
+score, an anomaly-map quality flag, and a list of spatial relations
+between regions. The output is consumed by the reporting layer and
+exported per sample.
+
+The engine is deliberately rule-based rather than learned. All
+thresholds and category priors are exposed as constructor arguments
+or read from ``priors.py``, so a future user can swap heuristics, add
+archetypes, or replace this module entirely without touching the
+detector or the reporting code.
+"""
 
 from dataclasses import dataclass, field
 from typing import List
@@ -9,7 +24,15 @@ from .priors import CATEGORY_PRIORS
 
 @dataclass
 class RuleResult:
-    """Structured symbolic reasoning output."""
+    """Container for the per-image symbolic output.
+
+    Fields are intentionally flat so each can be serialized directly
+    into the per-sample CSV/JSONL exports without further reshaping.
+    ``tags`` holds the geometric descriptors the engine derived from
+    region features; ``archetype`` is a single label resolved from
+    those tags; ``spatial_relations`` is empty when only one region
+    survives cleanup.
+    """
 
     severity: str
     archetype: str
@@ -20,7 +43,12 @@ class RuleResult:
 
 
 class RuleEngine:
-    """Symbolic layer over anomaly regions with confidence and spatial reasoning."""
+    """Stateless symbolic layer over anomaly regions.
+
+    The engine carries only a handful of scalar thresholds; it holds
+    no per-image state. ``analyze`` is the single entry point and is
+    safe to call from a tight evaluation loop.
+    """
 
     def __init__(
         self,
@@ -42,6 +70,14 @@ class RuleEngine:
         regions: List[RegionFeatures],
         normalized_score: float = 1.0,
     ) -> RuleResult:
+        """Map a list of region descriptors to a single ``RuleResult``.
+
+        Callers pass the cleaned region set (largest first) together
+        with the image-level score normalized by its threshold. When
+        the region set is empty the engine returns a designated
+        ``no_salient_region`` result so the per-sample record for a
+        clean image still carries a valid quality flag.
+        """
         if not regions:
             return RuleResult(
                 severity="none",
@@ -52,10 +88,15 @@ class RuleEngine:
             )
 
         prior = CATEGORY_PRIORS[category]
+        # The pipeline guarantees regions are sorted by descending
+        # area, so ``regions[0]`` is the dominant defect candidate.
+        # All single-region geometric tags are derived from it.
         largest = regions[0]
         tags: List[str] = []
 
-        # --- Severity ---
+        # Severity is driven by total anomalous area fraction rather
+        # than by the largest region alone, so a category dominated
+        # by many small defects is not under-reported.
         total_area_fraction = sum(r.area_fraction for r in regions)
         if total_area_fraction >= self.severity_high_area_fraction:
             severity = "high"
@@ -64,7 +105,10 @@ class RuleEngine:
         else:
             severity = "low"
 
-        # --- Geometric tags ---
+        # Geometric tags. Each tag is independent and is consumed
+        # later by ``_resolve_archetype``, which picks a single label
+        # in priority order. New archetypes can be added by appending
+        # a tag here and a branch in ``_resolve_archetype``.
         if len(regions) >= self.distributed_region_count:
             tags.append("distributed")
         if largest.touches_border and prior.border_sensitive:
@@ -108,21 +152,34 @@ class RuleEngine:
         normalized_score: float,
         severity: str,
     ) -> float:
-        """Score how confident the symbolic explanation is.
+        """Composite confidence in [0, 1] reported alongside each prediction.
 
-        Confidence is high when:
-          - the image score is well above threshold (normalized >> 1)
-          - the anomalous area is substantial
-          - the region geometry is unambiguous
-        Confidence is low when the score is near-threshold or regions are tiny.
+        Three coarse signals are combined into a single triage value:
+        how far the image score sits above its detection threshold,
+        how much anomalous area was actually flagged, and how cleanly
+        the flagged pixels partitioned into regions. The combination
+        is hand-weighted, not learned, and is intended as a reviewer-
+        facing summary rather than a calibrated probability.
         """
-        # Score factor: sigmoid-like ramp around threshold (normalized_score=1.0)
+        # Score-margin contribution: a clipped linear ramp on the
+        # normalized score. The lower anchor prevents near-threshold
+        # predictions from being reported as confident even when the
+        # spatial evidence looks clean; the upper saturation keeps
+        # very high scores from drowning out the area and clarity
+        # terms below.
         score_conf = min(1.0, max(0.0, (normalized_score - 0.5) / 1.5))
 
-        # Area factor: more anomalous area -> more trustworthy explanation
+        # Area contribution: anomalous area normalized against the
+        # medium-severity cutoff. Detections already at or above
+        # medium severity contribute the full term; smaller
+        # detections are discounted linearly so a single tiny
+        # region cannot drive confidence on its own.
         area_conf = min(1.0, total_area_fraction / self.severity_medium_area_fraction)
 
-        # Region clarity: single large region is clearer than many tiny ones
+        # Region-clarity contribution: a single dominant region is
+        # treated as the cleanest evidence; a small handful of regions
+        # is accepted at a reduced level; many small regions are read
+        # as fragmented evidence and capped further.
         if len(regions) == 1 and regions[0].area_fraction >= self.severity_medium_area_fraction:
             clarity = 1.0
         elif len(regions) <= 3:
@@ -133,7 +190,13 @@ class RuleEngine:
         return round(score_conf * 0.5 + area_conf * 0.3 + clarity * 0.2, 3)
 
     def _quality_flag(self, normalized_score: float) -> str:
-        """Flag the reliability of the anomaly map for this prediction."""
+        """Coarse reliability bucket for the underlying anomaly map.
+
+        Distinct from ``confidence`` in that it does not look at
+        region geometry at all. The flag is useful when an operator
+        needs a single, fast signal for whether the upstream detector
+        was committal on this image.
+        """
         if normalized_score >= 2.0:
             return "high_confidence"
         if normalized_score >= 1.0:
@@ -143,7 +206,13 @@ class RuleEngine:
         return "below_threshold"
 
     def _spatial_analysis(self, regions: List[RegionFeatures]) -> List[str]:
-        """Analyze spatial relationships between multiple detected regions."""
+        """Tag inter-region spatial patterns when more than one region survives.
+
+        Returns a small list of qualitative descriptors (alignment,
+        border behaviour, clustered vs. scattered). Single-region
+        cases short-circuit because none of these descriptors carry
+        meaning with one region.
+        """
         relations: List[str] = []
         if len(regions) < 2:
             return relations
@@ -187,6 +256,14 @@ class RuleEngine:
         return relations
 
     def _resolve_archetype(self, category: str, tags: List[str]) -> str:
+        """Collapse the active tag set into a single archetype label.
+
+        The branches are checked in priority order: more structurally
+        specific patterns (border, elongated/thin) take precedence
+        over coarser ones (large, distributed). A small set of
+        categories with thread-like geometry is routed to a
+        dedicated archetype to keep the labels physically meaningful.
+        """
         if "border_contact" in tags:
             return "border_localized_anomaly"
         if "elongated" in tags and "thin_structure" in tags:

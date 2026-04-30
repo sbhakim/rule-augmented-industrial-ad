@@ -1,4 +1,17 @@
-"""Full-dataset evaluation pipeline."""
+"""End-to-end evaluation pipeline over a configured set of categories.
+
+For each category in the config, this pipeline loads the fitted
+model, runs the full per-image flow (predict, mask cleanup, region
+summary, rule-engine analysis, explanation composition), accumulates
+the metrics, and writes both a compact summary and the full per-
+sample record set. The output schema is the integration point for
+downstream analyses; later scripts only need to read the exported
+JSONL to do additional studies without re-running the model.
+
+The pipeline is deliberately linear and side-effect aware: it
+mutates only the configured output directories, never touches the
+source data, and is safe to re-run.
+"""
 
 from typing import Dict, List
 
@@ -21,7 +34,16 @@ from ..utils.runtime import prepare_run_directories, save_run_metadata
 
 
 def evaluate_categories(config: ExperimentConfig) -> Dict:
-    """Evaluate all categories and save a compact report."""
+    """Run evaluation over every category named in ``config.dataset.categories``.
+
+    The function does five things, in order: prepare the run
+    directories and persist a copy of the config, instantiate the
+    rule engine with category-shared thresholds, walk each test
+    set image-by-image while accumulating per-image records and
+    aggregate metrics, write the summary plus per-sample exports
+    to disk, and return the summary dictionary so an outer script
+    can use it programmatically.
+    """
     set_global_seed(config.runtime.seed)
     ensure_dir(config.outputs.reports_dir)
     ensure_dir(config.outputs.records_dir)
@@ -57,6 +79,12 @@ def evaluate_categories(config: ExperimentConfig) -> Dict:
         iou_values = []
         coverage_values = []
 
+        # Per-image flow. The order is fixed by the framework
+        # contract: detector -> mask cleanup -> region summary ->
+        # rule engine -> text composition. Anything inserted in
+        # between (for example, an alternative cleanup) should
+        # preserve this sequence so the symbolic layer always
+        # receives the same shape of input.
         for loaded in test_dataset:
             prediction = model.predict(loaded.image)
             binary_mask = prediction.binary_mask
@@ -72,6 +100,12 @@ def evaluate_categories(config: ExperimentConfig) -> Dict:
                 min_region_area_px=config.rules.min_region_area_px,
                 border_margin_px=config.rules.border_margin_px,
             )
+            # The image-level decision is made on the raw score
+            # against the category-specific threshold learned at
+            # fit time. The normalized score (score divided by
+            # threshold) is the only image-score signal the rule
+            # engine sees, which keeps the symbolic layer
+            # detector-agnostic.
             predicted_label = int(prediction.score >= model.score_threshold)
             normalized_score = float(prediction.score / max(model.score_threshold, 1e-12))
             rule_result = rule_engine.analyze(category, regions, normalized_score)

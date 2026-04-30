@@ -1,4 +1,15 @@
-"""Model factory for config-driven model selection."""
+"""Model dispatch by ``model_type`` string.
+
+Both ``create_model`` and ``load_model`` look at the same field of
+the config so the choice of backend is a single string in the JSON
+file. The feature model is imported lazily inside the dispatch
+branch so users running the statistics-only baseline do not pay
+the torch import cost.
+
+Adding a new backend means adding a third branch here and a
+matching subclass of ``BaseAnomalyModel``; no other module needs
+to know about the backend type.
+"""
 
 from pathlib import Path
 
@@ -8,7 +19,7 @@ from .normal_stats import CategoryNormalStatsModel
 
 
 def create_model(category: str, config: ModelConfig) -> BaseAnomalyModel:
-    """Instantiate an anomaly model based on the configured model_type."""
+    """Build a fresh, unfitted model instance for ``category``."""
     if config.model_type == "normal_stats":
         return CategoryNormalStatsModel(
             category=category,
@@ -35,7 +46,7 @@ def create_model(category: str, config: ModelConfig) -> BaseAnomalyModel:
 
 
 def load_model(category: str, config: ModelConfig, models_dir: Path) -> BaseAnomalyModel:
-    """Load a previously saved model based on the configured model_type."""
+    """Reload a previously fitted model from ``models_dir``."""
     if config.model_type == "normal_stats":
         return CategoryNormalStatsModel.load(category, models_dir)
     if config.model_type == "feature":

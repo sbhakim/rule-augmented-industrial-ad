@@ -1,29 +1,26 @@
-"""Explanation-level ablation pipeline.
+"""Stand-alone ablation that varies only the symbolic layer.
 
-Re-runs the symbolic rule engine over the *already-computed* per-image
-region statistics that the main evaluation pipeline exports to
-``per_sample_records.jsonl`` (and to its detailed sibling JSONL produced
-here). Instead of re-running the visual model, this script:
+The main evaluation pipeline exports a JSONL of per-sample records
+that already contain the geometric summaries the rule engine
+consumes (``total_region_area_fraction``, ``region_count``, and so
+on). This script reuses those records, sweeps the severity area
+thresholds across a small grid, and reports how often the severity
+label changes relative to the default operating point.
 
-  1. Reads predicted region area-fraction statistics from existing JSONL
-     records (``total_region_area_fraction``, ``largest_region_area_fraction``,
-     ``region_count``, ``normalized_score``).
-  2. Sweeps the severity thresholds ``severity_high_area_fraction`` (tau_h)
-     and ``severity_medium_area_fraction`` (tau_m).
-  3. Reports, per setting and per category, the *severity distribution*
-     and the fraction of images whose severity label is *unchanged* with
-     respect to the default setting (tau_h=0.05, tau_m=0.015).
-
-This isolates the symbolic layer from detector variability: a
-mask-cleanup ablation alone cannot move severity or archetype much
-because cleanup mostly preserves region area.
+The point of running an ablation in this form is to isolate the
+symbolic layer's behaviour from any detector variability: no model
+is reloaded, no image is re-read, and the geometric inputs are
+fixed. A user adapting this script to study other rule constants
+can copy the same pattern --- read once, mutate the symbolic
+function, count how labels move.
 
 Outputs
 -------
-``severity_stability.csv`` : per-(category, tau_h, tau_m) table with
-    severity counts (none/low/medium/high) and unchanged-fraction.
-``severity_stability_summary.json`` : overall stability and
-    macro-averaged unchanged fractions across the sweep grid.
+``severity_stability.csv`` : per-(category, tau_h, tau_m) table
+    with severity counts and an unchanged-fraction column.
+``severity_stability_summary.json`` : aggregate unchanged-fraction
+    per setting, plus the default thresholds used as the reference
+    operating point.
 """
 
 from __future__ import annotations
@@ -50,6 +47,14 @@ def _load_records(path: Path) -> List[Dict]:
 
 
 def _assign_severity(total_area_fraction: float, region_count: int, tau_h: float, tau_m: float) -> str:
+    """Replica of the rule engine's severity decision.
+
+    Held local to this module so the ablation can vary the
+    thresholds freely without instantiating the full ``RuleEngine``.
+    The decision logic must stay in lockstep with
+    ``RuleEngine.analyze``; if the rule engine's severity branch
+    ever changes shape, this function should change with it.
+    """
     if region_count == 0:
         return "none"
     if total_area_fraction >= tau_h:
@@ -60,7 +65,15 @@ def _assign_severity(total_area_fraction: float, region_count: int, tau_h: float
 
 
 def sweep_severity(records: Iterable[Dict]) -> Dict:
-    """Return per-(category, tau_h, tau_m) severity distributions and stability vs default."""
+    """Apply every grid setting to the record stream and tabulate stability.
+
+    The reference labels are computed once at the default operating
+    point, then each grid setting is compared against that
+    reference image-by-image. The output covers per-category,
+    per-setting severity counts so a downstream user can build
+    distribution plots in addition to the headline stability
+    fraction.
+    """
     records = list(records)
 
     # Cache default severity per record key.

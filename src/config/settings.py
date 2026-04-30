@@ -1,4 +1,13 @@
-"""Experiment configuration dataclasses and conversion helpers."""
+"""Schema for the JSON configuration consumed by the pipelines.
+
+Each subsection of the config maps to a dataclass below. The whole
+schema is mirrored both ways: ``ExperimentConfig.from_dict`` parses
+a nested dict produced by the JSON loader, and ``to_dict`` writes
+the same shape back so a fitted run can be re-described in full.
+Keeping the schema explicit (rather than passing raw dicts) gives
+type checks at the call site and a single place to add a new
+parameter when extending the framework.
+"""
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -51,7 +60,15 @@ class PostprocessingConfig:
 
 @dataclass
 class RuleConfig:
-    """Rule-engine thresholds for explanation and false-alarm control."""
+    """Threshold set consumed by the symbolic rule engine.
+
+    These constants are deliberately surfaced at the config level
+    rather than hard-coded inside the engine so a user studying the
+    sensitivity of the symbolic layer can vary them from a single
+    JSON file. Defaults are conservative; aggressive cleanup or
+    aggressive severity bucketing should be done by overriding
+    them rather than by patching the engine.
+    """
 
     min_region_area_px: int = 32
     severity_high_area_fraction: float = 0.05

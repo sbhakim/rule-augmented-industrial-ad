@@ -1,4 +1,11 @@
-"""Training pipeline for anomaly models."""
+"""Per-category fitting loop.
+
+Walks the categories named in the config, instantiates a fresh
+backend for each, fits it on that category's anomaly-free training
+images, and persists the result. The fitted artifacts are written
+to ``models_dir`` so that ``evaluate.py`` can later run on its own
+without re-doing any training work.
+"""
 
 from typing import Dict
 
@@ -11,7 +18,12 @@ from ..utils.io import ensure_dir, set_global_seed
 
 
 def fit_categories(config: ExperimentConfig) -> Dict[str, BaseAnomalyModel]:
-    """Fit one model per selected category."""
+    """Fit and persist one model per category named in the config.
+
+    Only label-0 (anomaly-free) training samples are kept; this
+    enforces the one-class assumption at the data layer rather
+    than relying on the backend to filter internally.
+    """
     set_global_seed(config.runtime.seed)
     ensure_dir(config.outputs.models_dir)
     indexed = index_dataset(config.dataset.root, config.dataset.categories)

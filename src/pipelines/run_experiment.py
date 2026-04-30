@@ -1,4 +1,10 @@
-"""Command-style entry point for config-driven experiment execution."""
+"""Top-level CLI entry point that fits and then evaluates.
+
+This is the recommended way to run the framework end-to-end from
+a single JSON config. It exists as a thin wrapper over the two
+pipelines so users can invoke either stage independently from
+their own scripts when they need finer control.
+"""
 
 import argparse
 from pathlib import Path

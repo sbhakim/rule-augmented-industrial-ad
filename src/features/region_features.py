@@ -1,4 +1,13 @@
-"""Geometric features derived from binary anomaly regions."""
+"""Geometric region descriptors consumed by the symbolic layer.
+
+The cleaned binary mask is decomposed into connected components,
+and each component is summarized as a small struct of geometric
+quantities (area, bounding box, aspect ratio, fill ratio, border
+contact, centroid). The rule engine reads only these descriptors,
+which is what allows the symbolic layer to remain detector-
+agnostic --- any model that produces a binary mask can be plugged
+upstream.
+"""
 
 from dataclasses import dataclass
 from typing import Dict, List
@@ -23,7 +32,17 @@ class RegionFeatures:
 
 
 def summarize_regions(binary_mask: np.ndarray, min_region_area_px: int, border_margin_px: int) -> List[RegionFeatures]:
-    """Convert connected components into region feature records."""
+    """Decompose a binary mask into a sorted list of region descriptors.
+
+    Components below ``min_region_area_px`` are dropped, which is a
+    second guard on top of the postprocessing filter so the rule
+    engine never has to reason about pixel-level noise. The
+    returned list is sorted by descending area so the rule engine
+    can rely on ``regions[0]`` being the dominant defect candidate.
+    Border contact is computed against a configurable margin
+    rather than the strict edge so single-pixel rounding artifacts
+    near the border do not flip the flag.
+    """
     height, width = binary_mask.shape
     regions: List[RegionFeatures] = []
 

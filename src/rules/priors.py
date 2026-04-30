@@ -1,4 +1,16 @@
-"""Category-specific explanation priors."""
+"""Per-category structural priors consumed by the rule engine.
+
+Each category has a small set of qualitative traits (whether the
+object family is texture or rigid, whether border defects are
+physically meaningful, whether contamination-style defects occur,
+and so on). The rule engine reads these flags to decide whether
+to emit certain tags --- for example, the ``border_contact`` tag
+is only meaningful for categories where the boundary is actually
+the part being inspected.
+
+Adding a new category means adding one entry to ``CATEGORY_PRIORS``
+below; no other code change is required.
+"""
 
 from dataclasses import dataclass
 from typing import Dict
@@ -6,7 +18,7 @@ from typing import Dict
 
 @dataclass(frozen=True)
 class CategoryPrior:
-    """Coarse structural prior for one category."""
+    """Coarse structural traits used to gate tag emission."""
 
     category: str
     object_family: str

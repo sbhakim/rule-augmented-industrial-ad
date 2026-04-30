@@ -1,4 +1,15 @@
-"""A lightweight per-category normal-image statistics model."""
+"""Pixel-statistics anomaly model used as the lightweight baseline.
+
+A reference template (per-pixel mean and standard deviation) is
+estimated from the anomaly-free training images of one category.
+At test time the anomaly map is the per-pixel z-score against this
+template. The model is intentionally simple --- no deep features,
+no learned parameters --- and is included to give the framework a
+backend at the lower end of the capability spectrum, useful as a
+sanity check and as a reference point when reasoning about how
+much of the pipeline behaviour is driven by the detector versus
+the symbolic layer above it.
+"""
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -41,10 +52,24 @@ class CategoryNormalStatsModel(BaseAnomalyModel):
         self.score_threshold: Optional[float] = None
 
     def fit(self, images: List[np.ndarray]) -> "CategoryNormalStatsModel":
+        """Estimate the pixel-wise template and threshold quantiles.
+
+        Mean and standard-deviation maps are computed across the
+        anomaly-free training stack. Image- and pixel-level
+        thresholds are then derived from the same training data
+        (high-quantile cutoffs of the residual distribution and of
+        the per-image aggregate score), which keeps the operating
+        point category-specific without ever observing anomalous
+        pixels.
+        """
         stack = np.stack(images, axis=0).astype(np.float32)
         self.mean_image = stack.mean(axis=0)
         self.std_image = stack.std(axis=0)
 
+        # Pre-compute residual maps for every training image so the
+        # pixel-level threshold and the image-level score quantile
+        # are read off the exact same operator that ``predict`` will
+        # apply at test time.
         residuals = [smooth_anomaly_map(zscore_map(image, self.mean_image, self.std_image, self.eps), self.smoothing_sigma) for image in images]
         residual_stack = np.stack(residuals, axis=0)
         scores = np.asarray([topk_score(residual, self.topk_ratio) for residual in residuals], dtype=np.float32)

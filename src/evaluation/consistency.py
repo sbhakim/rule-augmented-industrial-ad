@@ -1,10 +1,17 @@
-"""Cross-backend explanation consistency evaluation.
+"""Cross-backend agreement diagnostic for the symbolic layer.
 
-Reads per-sample JSONL records from two runs (typically the statistics
-baseline and the feature-based backend) and reports, per category and
-overall, the fraction of shared images on which the two backends assign
-the same archetype and severity. This is a cheap proxy for the stability
-of the symbolic reasoning layer across different visual evidence inputs.
+Two backends produce two independent JSONL exports for the same
+test set. This module joins those exports on (category, image
+path) and reports the fraction of shared images on which the two
+backends assigned the same archetype or severity. Two granularities
+are computed: across all shared images, and restricted to the
+images on which both backends predicted positive (the "agreed
+positives" view), which removes the cases where one backend
+declared no salient region.
+
+The diagnostic is meant for repository users who plug in a new
+detector and want a quick read on whether their swap propagates
+into report-level label changes.
 """
 
 from __future__ import annotations
@@ -30,12 +37,21 @@ def _index_records(records: Iterable[Dict]) -> Dict[Tuple[str, str], Dict]:
 
 
 def compare_runs(baseline_path: Path, feature_path: Path) -> Dict:
-    """Compute archetype + severity agreement between two run records."""
+    """Join two record sets and tabulate per-category agreement.
+
+    The two record files are not assumed to cover the same images;
+    the comparison is done on the intersection keyed by (category,
+    image path). Per-category and overall counts are returned in a
+    single dictionary suitable for direct JSON serialization.
+    """
     baseline_records = _load_records(baseline_path)
     feature_records = _load_records(feature_path)
     baseline_index = _index_records(baseline_records)
     feature_index = _index_records(feature_records)
 
+    # Sorting the shared keys is purely for determinism: the
+    # output ordering must not depend on the dict iteration order
+    # of either input file.
     shared_keys = sorted(set(baseline_index).intersection(feature_index))
     per_category = defaultdict(lambda: {
         "samples": 0, "archetype_match": 0, "severity_match": 0,
